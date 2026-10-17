@@ -1,5 +1,7 @@
 # Paradise Viewer
 
+[Download](../../releases)
+
 A 3D viewer and map editor for Burnout Paradise's whole map, as a Windows
 desktop app. It shows the city in full detail around the camera and low detail
 everywhere else, along with Burnout's collision, traffic lanes and parked cars.
