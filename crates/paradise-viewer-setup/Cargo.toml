@@ -1,0 +1,20 @@
+[package]
+name = "paradise-viewer-setup"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Installer for the Paradise Viewer: builds the viewer's map from the player's own copy of Burnout Paradise Remastered and installs the viewer app"
+
+[[bin]]
+name = "paradise-viewer-setup"
+path = "src/main.rs"
+
+[[bin]]
+name = "paradise-viewer-setup-cli"
+path = "src/bin/paradise-viewer-setup-cli.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+eframe = "0.36"
+rfd = "0.17"

@@ -1,0 +1,12 @@
+[package]
+name = "paradise-viewer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The Paradise map viewer / editor as a desktop app: the viewer page in a window, its files served from inside the app"
+
+[dependencies]
+wry = "0.57"
+tao = "0.37"
+rfd = "0.17"
+serde_json.workspace = true

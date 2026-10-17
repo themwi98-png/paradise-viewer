@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+serde_json = "1.0.152"
