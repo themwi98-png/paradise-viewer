@@ -54,12 +54,16 @@
   <div id="editstatus">Edits stay in this browser until exported. Only generated pieces in Extra collision can be selected.</div>
   <h2>Traffic</h2>
   <div id="trafficPanel"></div>
+  <h2>Junctions</h2>
+  <div id="junctionPanel"></div>
   <h2>Water</h2>
   <div id="waterPanel"></div>
   <h2>Spawns</h2>
   <div id="spawnPanel"></div>
   <h2>Sidewalks</h2>
   <div id="sidewalkPanel"></div>
+  <h2>Map coast</h2>
+  <div id="coastPanel"></div>
   <h2>Surfaces</h2>
   <div id="surfaces"></div>
 </div>
@@ -72,6 +76,8 @@ import { initTraffic } from './traffic.js';
 import { initWater } from './water.js';
 import { initSpawns } from './spawns.js';
 import { initSidewalks } from './sidewalks.js';
+import { initCoast } from './coast.js';
+import { initJunctions } from './junctions.js';
 
 // Layers map to export folders under out/ (see bpx export/overview/collision).
 // Visual (full detail) loads only the units nearest the camera in full detail
@@ -195,6 +201,7 @@ addEventListener('keyup', (e) => { if (e.key === 'Shift') controls.panSpeed = 1;
 addEventListener('blur', () => { controls.panSpeed = 1; });
 
 const traffic = initTraffic({ THREE, scene, camera, renderer, panel: $('trafficPanel'), info: $('info'), pickGround });
+const junctionsPanel = initJunctions({ THREE, scene, panel: $('junctionPanel'), pickGround });
 const water = initWater({ THREE, scene, camera, panel: $('waterPanel'), pickGround });
 const spawns = initSpawns({ THREE, scene, camera, panel: $('spawnPanel'), pickGround });
 // Shows only the given collision surface ids (null: all), ticking the
@@ -205,6 +212,7 @@ function showOnlySurfaces(ids) {
   restyle();
 }
 const sidewalks = initSidewalks({ THREE, scene, panel: $('sidewalkPanel'), pickGround, showOnlySurfaces });
+const coast = initCoast({ THREE, scene, camera, panel: $('coastPanel'), pickGround });
 
 function parseUnits(s) {
   return s.split(',').flatMap((p) => {
@@ -723,9 +731,11 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4) { downAt = null; return; }
   downAt = null;
   if (traffic.handleClick(e)) return;
+  if (junctionsPanel.handleClick(e)) return;
   if (water.handleClick(e)) return;
   if (spawns.handleClick(e)) return;
   if (sidewalks.handleClick(e)) return;
+  if (coast.handleClick(e)) return;
   ray.setFromCamera(new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
   const editing = $('editmode').checked;
   const targets = editing ? [groups.extra] : Object.values(groups);

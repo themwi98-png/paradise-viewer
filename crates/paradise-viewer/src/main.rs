@@ -12,6 +12,9 @@
 //! The page runs in Microsoft Edge WebView2 (part of Windows 11). Its stored
 //! state (edits not yet exported, ...) is kept in
 //! %LOCALAPPDATA%\GTA-Paradise\viewer, separate from any browser's.
+//!
+//! %LOCALAPPDATA%\GTA-Paradise\viewer.log (new each start) says which
+//! folders it uses and lists the files a page asked for that weren't found.
 
 #![windows_subsystem = "windows"]
 
@@ -46,6 +49,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let Some(root) = find_root()? else { return Ok(()) };
     let gta_mod = find_mod(&root);
+    log(&format!("map data from {}; GTA mod {}", root.display(), gta_mod.as_ref().map_or("not found (its map edits and files can't be shown)".to_string(), |m| format!("in {}", m.display()))));
     let dirs = Arc::new(Dirs { root, gta_mod });
 
     let (tx, rx) = mpsc::channel::<(Request<Vec<u8>>, RequestAsyncResponder)>();
@@ -91,6 +95,24 @@ fn run() -> Result<(), String> {
 }
 
 /// %LOCALAPPDATA%\GTA-Paradise, where the setup keeps its files too.
+/// Adds a line to viewer.log (the first call starts it afresh; at most 200
+/// "not found" lines).
+fn log(line: &str) {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    static MISSING: AtomicUsize = AtomicUsize::new(0);
+    let Some(path) = local_dir().map(|d| d.join("viewer.log")) else { return };
+    if line.starts_with("not found") && MISSING.fetch_add(1, Ordering::Relaxed) >= 200 {
+        return;
+    }
+    let fresh = !STARTED.swap(true, Ordering::SeqCst);
+    let file = if fresh { std::fs::File::create(&path) } else { std::fs::OpenOptions::new().append(true).open(&path) };
+    if let Ok(mut f) = file {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 fn local_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("GTA-Paradise"))
 }
@@ -177,6 +199,9 @@ fn serve(dirs: &Dirs, request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>
     } else {
         None
     };
+    if body.is_none() {
+        log(&format!("not found: {path}"));
+    }
     match body {
         Some(body) => Response::builder().header("Content-Type", content_type(&path)).body(body),
         None => Response::builder().status(404).body(Cow::Borrowed(&b""[..])),

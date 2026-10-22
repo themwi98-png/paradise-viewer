@@ -83,6 +83,11 @@ impl Layout {
     fn extra_collision(&self) -> PathBuf {
         self.data.join("collision/paradise_extra.pcx")
     }
+
+    /// The added pieces dropped for modded Burnout maps (OTN, ...).
+    fn modded_collision(&self) -> PathBuf {
+        self.data.join("collision/modded_maps.json")
+    }
 }
 
 /// What the player picked.
@@ -184,6 +189,7 @@ impl Ctx<'_> {
             .args(args)
             .current_dir(&self.opts.dir)
             .env("BPX_STOCK_COL", self.opts.burnout.join("WORLDCOL.BIN"))
+            .env("BPX_MODDED_COL", self.layout.modded_collision())
             .stdout(log.try_clone()?)
             .stderr(log)
             .status()
@@ -232,15 +238,30 @@ impl Fnv {
 }
 
 /// What a step's output depends on: the setup and converter versions, the
-/// Burnout folder and the setup's own data.
+/// Burnout folder and its files (a mod installed into it changes them) and
+/// the setup's own data.
 fn fingerprint(c: &Ctx, step: &Step) -> Result<String> {
     let mut h = Fnv(0xcbf2_9ce4_8422_2325);
     h.add(SETUP_VERSION.as_bytes());
     h.add(step.name.as_bytes());
     h.add(&std::fs::read(&c.layout.bpx)?);
     h.add(c.burnout().as_bytes());
+    let mut files: Vec<(String, String)> = std::fs::read_dir(&c.opts.burnout)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .map(|e| {
+            let id = e.metadata().map(|m| format!("{} {:?}", m.len(), m.modified().ok())).unwrap_or_default();
+            (e.file_name().to_string_lossy().into_owned(), id)
+        })
+        .collect();
+    files.sort();
+    for (name, id) in files {
+        h.add(name.as_bytes());
+        h.add(id.as_bytes());
+    }
     if step.name == "extra" {
         h.add(&std::fs::read(c.layout.extra_collision())?);
+        h.add(&std::fs::read(c.layout.modded_collision()).unwrap_or_default());
     }
     Ok(format!("{:016x}", h.0))
 }
