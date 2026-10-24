@@ -4,8 +4,12 @@
 // as in Burnout. The dashed lines between the points only show the order.
 // Exported as paradise-races-v1 JSON and saved as tools/edits/races.json.
 //
+// Placing a start: the first click puts it down, then its arrow follows
+// the mouse until a second click sets the way the cars face.
+//
 // Start green (S), checkpoints orange (numbered), finish red (F); F9 marks
-// (spawns panel) are yellow.
+// (spawns panel) are yellow. The start's heading can also be typed in or
+// nudged (a degree or 15 at a time, or turned round) under the tools.
 //
 // Points are GTA world coordinates (z up); the start heading is in GTA
 // degrees (0 north, counter-clockwise). The viewer is in Burnout
@@ -17,7 +21,9 @@ const COLOURS = { start: 0x2ecc40, checkpoint: 0xff8c00, finish: 0xff4136, line:
 /// marker removes it.
 const REMOVE_WITHIN = 14;
 /// Length (m) of the arrow showing the way the cars face at the start.
-const ARROW = 25;
+const ARROW = 60;
+/// Compass points for a GTA heading (0 north, counter-clockwise), by 45°.
+const COMPASS = ['N', 'NW', 'W', 'SW', 'S', 'SE', 'E', 'NE'];
 
 const emptyEdits = () => ({ format: 'paradise-races-v1', races: [] });
 const newRace = (name) => ({ name, start: null, heading: 0, checkpoints: [], finish: null });
@@ -29,6 +35,8 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
     <div class="row"><select id="rRace" style="flex:1;min-width:0;background:#222;color:var(--fg);border:1px solid #444;border-radius:4px"></select><button id="rNew">New race</button></div>
     <div class="row"><input id="rName" type="text" placeholder="Race name" style="flex:1"><button id="rDelete">Delete race</button></div>
     <div class="row"><label style="margin:0"><input type="radio" name="rTool" value="start" checked> Start</label><label style="margin:0"><input type="radio" name="rTool" value="checkpoint"> Checkpoint</label><label style="margin:0"><input type="radio" name="rTool" value="finish"> Finish</label></div>
+    <div class="row" style="align-items:center"><span>Start faces</span><input id="rHeading" type="number" min="0" max="359.9" step="1" style="width:4.2em">° <span id="rCompass" style="color:var(--muted)"></span></div>
+    <div class="row"><button id="rLeft15" title="Turn the start 15° left">◀ 15°</button><button id="rLeft1" title="Turn the start 1° left">◀ 1°</button><button id="rRight1" title="Turn the start 1° right">1° ▶</button><button id="rRight15" title="Turn the start 15° right">15° ▶</button><button id="rFlip" title="Turn the start round">Turn round</button></div>
     <div class="row"><button id="rUndo">Undo</button><button id="rExport">Export races</button></div>
     <div class="row"><button id="rLoad">Load tools/edits/races.json</button></div>
     <div id="rStatus" style="color:var(--muted);font-size:11px;margin-top:5px;line-height:1.35"></div>`;
@@ -40,6 +48,8 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
   let fromFile = false;
   let current = 0;      // index of the race being edited
   let aiming = false;   // the start was just placed: the next click sets its heading
+  let preview = null;   // while aiming: the heading the mouse points the arrow at
+  let lastMove = 0;
   let loading = null;   // load(), once started
   const undo = [];
 
@@ -87,7 +97,7 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
     let hint = '';
     if ($('rEdit').checked) {
       if (!r) hint = ' Click New race to start one.';
-      else if (aiming) hint = ' Click where the cars should face at the start.';
+      else if (aiming) hint = ' The arrow follows the mouse: click where the cars should face at the start.';
       else hint = { start: ' Click the map to place the start, then click again where the cars face.',
                     checkpoint: ' Click to add a checkpoint (it goes where it fits best in the order); click one to remove it.',
                     finish: ' Click the map to place the finish.' }[tool()];
@@ -117,6 +127,29 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
     current = Math.min(current, Math.max(edits.races.length - 1, 0));
     list.value = current;
     $('rName').value = race()?.name || '';
+    showHeading();
+  }
+
+  // The heading box and its compass point, for the race being edited.
+  function showHeading() {
+    const r = race();
+    const on = !!r?.start;
+    for (const id of ['rHeading', 'rLeft15', 'rLeft1', 'rRight1', 'rRight15', 'rFlip']) $(id).disabled = !on;
+    if (document.activeElement !== $('rHeading')) $('rHeading').value = on ? Math.round(r.heading * 10) / 10 : '';
+    $('rCompass').textContent = on ? COMPASS[Math.round(r.heading / 45) % 8] : '(place the start first)';
+  }
+
+  // Sets the start's heading (GTA degrees; turning left adds).
+  function setHeading(h, msg) {
+    const r = race();
+    if (!r?.start || !Number.isFinite(h)) return;
+    remember();
+    r.heading = +(((h % 360) + 360) % 360).toFixed(1);
+    aiming = false;
+    preview = null;
+    save();
+    redraw();
+    status(msg || `Start faces ${r.heading}°.`);
   }
 
   // Markers keep the same size on screen at any distance and draw over
@@ -151,9 +184,9 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
     return l;
   }
 
-  function arrow(r, opacity) {
+  function arrow(r, opacity, heading) {
     const from = toViewer(r.start);
-    const h = r.heading * Math.PI / 180;
+    const h = heading * Math.PI / 180;
     const to = toViewer([r.start[0] - Math.sin(h) * ARROW, r.start[1] + Math.cos(h) * ARROW, r.start[2]]);
     const dir = to.clone().sub(from);
     const a = new THREE.ArrowHelper(dir.clone().normalize(), from, dir.length(), COLOURS.start, ARROW * 0.35 / (placement.scale || 1), ARROW * 0.25 / (placement.scale || 1));
@@ -179,12 +212,13 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
       const points = chain(r).map(toViewer);
       if (points.length > 1) group.add(line(points, opacity));
       if (r.start) {
-        group.add(arrow(r, opacity));
+        group.add(arrow(r, opacity, i === current && aiming && preview !== null ? preview : r.heading));
         group.add(marker(COLOURS.start, 'S', toViewer(r.start), size * 1.2, opacity));
       }
       r.checkpoints.forEach((p, k) => group.add(marker(COLOURS.checkpoint, String(k + 1), toViewer(p), size, opacity)));
       if (r.finish) group.add(marker(COLOURS.finish, 'F', toViewer(r.finish), size * 1.2, opacity));
     });
+    showHeading();
     status();
   }
 
@@ -227,6 +261,7 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
     if (aiming) {
       r.heading = +headingTo(r.start, p).toFixed(1);
       aiming = false;
+      preview = null;
       msg = `Start faces ${r.heading.toFixed(0)}°.`;
     } else if (tool() === 'start') {
       r.start = p;
@@ -234,6 +269,7 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
       const next = r.checkpoints[0] || r.finish;
       if (next) r.heading = +headingTo(p, next).toFixed(1);
       aiming = true;
+      preview = null;
       msg = `Start at ${where}.`;
     } else if (tool() === 'finish') {
       r.finish = p;
@@ -284,6 +320,7 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
       fromFile = true;
       current = 0;
       aiming = false;
+      preview = null;
       save();
       if (ask) { fillList(); redraw(); status(`Loaded ${doc.races.length} race(s).`); }
     } catch (_) { if (ask) status('Could not read tools/edits/races.json.'); }
@@ -301,13 +338,15 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
   });
   $('rEdit').addEventListener('change', async () => {
     aiming = false;
+    preview = null;
     if ($('rEdit').checked) await show();
     status();
   });
-  panel.querySelectorAll('input[name=rTool]').forEach((b) => b.addEventListener('change', () => { aiming = false; status(); }));
+  panel.querySelectorAll('input[name=rTool]').forEach((b) => b.addEventListener('change', () => { aiming = false; preview = null; redraw(); }));
   $('rRace').addEventListener('change', () => {
     current = +$('rRace').value;
     aiming = false;
+    preview = null;
     $('rName').value = race()?.name || '';
     redraw();
   });
@@ -317,6 +356,7 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
     edits.races.push(newRace(`Race ${edits.races.length + 1}`));
     current = edits.races.length - 1;
     aiming = false;
+    preview = null;
     panel.querySelector('input[name=rTool][value=start]').checked = true;
     if (!$('rEdit').checked) $('rEdit').checked = true;
     save();
@@ -339,6 +379,7 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
     remember();
     edits.races.splice(current, 1);
     aiming = false;
+    preview = null;
     save();
     fillList();
     redraw();
@@ -347,11 +388,31 @@ export function initRaces({ THREE, scene, camera, panel, pickGround }) {
     if (!undo.length) return status('Nothing to undo.');
     ({ edits, current } = JSON.parse(undo.pop()));
     aiming = false;
+    preview = null;
     save();
     fillList();
     redraw();
   });
   $('rLoad').addEventListener('click', () => loadFile(true));
+  // While aiming, the start's arrow follows the mouse over the map.
+  addEventListener('pointermove', (e) => {
+    const r = race();
+    if (!aiming || !r?.start || e.target.tagName !== 'CANVAS' || e.buttons) return;
+    const t = performance.now();
+    if (t - lastMove < 50) return;
+    lastMove = t;
+    const hit = pickGround(e);
+    if (!hit) return;
+    const p = toGta(hit);
+    if (Math.hypot(p[0] - r.start[0], p[1] - r.start[1]) < 1) return;
+    preview = headingTo(r.start, p);
+    redraw();
+    $('rCompass').textContent = `${COMPASS[Math.round(preview / 45) % 8]} (${preview.toFixed(0)}°, click to set)`;
+  });
+  $('rHeading').addEventListener('change', () => setHeading(Number($('rHeading').value)));
+  for (const [id, turn] of [['rLeft15', 15], ['rLeft1', 1], ['rRight1', -1], ['rRight15', -15], ['rFlip', 180]]) {
+    $(id).addEventListener('click', () => setHeading((race()?.heading || 0) + turn));
+  }
   $('rExport').addEventListener('click', () => {
     const unfinished = edits.races.filter((r) => !r.start || !r.finish).map((r) => r.name);
     const blob = new Blob([JSON.stringify(edits, null, 1)], { type: 'application/json' });
