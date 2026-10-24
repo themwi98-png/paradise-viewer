@@ -88,6 +88,11 @@ impl Layout {
     fn modded_collision(&self) -> PathBuf {
         self.data.join("collision/modded_maps.json")
     }
+
+    /// Fixes to Burnout's own collision (water sheets far above the water).
+    fn collision_fixes(&self) -> PathBuf {
+        self.data.join("collision/collision_fixes.json")
+    }
 }
 
 /// What the player picked.
@@ -190,6 +195,7 @@ impl Ctx<'_> {
             .current_dir(&self.opts.dir)
             .env("BPX_STOCK_COL", self.opts.burnout.join("WORLDCOL.BIN"))
             .env("BPX_MODDED_COL", self.layout.modded_collision())
+            .env("BPX_COL_FIXES", self.layout.collision_fixes())
             .stdout(log.try_clone()?)
             .stderr(log)
             .status()
@@ -262,6 +268,9 @@ fn fingerprint(c: &Ctx, step: &Step) -> Result<String> {
     if step.name == "extra" {
         h.add(&std::fs::read(c.layout.extra_collision())?);
         h.add(&std::fs::read(c.layout.modded_collision()).unwrap_or_default());
+    }
+    if step.name == "extra" || step.name == "collision" {
+        h.add(&std::fs::read(c.layout.collision_fixes()).unwrap_or_default());
     }
     Ok(format!("{:016x}", h.0))
 }

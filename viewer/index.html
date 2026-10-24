@@ -45,6 +45,8 @@
   <label>Opacity <input id="opacity" type="range" min="0.1" max="1" step="0.05" value="1" style="flex:1"></label>
   <label><input id="wire" type="checkbox"> Wireframe</label>
   <label><input id="genonly" type="checkbox"> Only generated (magenta)</label>
+  <label><input id="fillopen" type="checkbox"> New collision: only red (rises beside a road, no wall)</label>
+  <div class="row"><button id="showOld">Old collision</button><button id="showNew">New collision</button></div>
   <h2>Collision editor</h2>
   <label><input id="editmode" type="checkbox"> Edit extra collision</label>
   <label><input id="editnative" type="checkbox"> Include native collision (not just generated)</label>
@@ -60,6 +62,8 @@
   <div id="waterPanel"></div>
   <h2>Spawns</h2>
   <div id="spawnPanel"></div>
+  <h2>Races</h2>
+  <div id="racePanel"></div>
   <h2>Sidewalks</h2>
   <div id="sidewalkPanel"></div>
   <h2>Map coast</h2>
@@ -75,6 +79,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { initTraffic } from './traffic.js';
 import { initWater } from './water.js';
 import { initSpawns } from './spawns.js';
+import { initRaces } from './races.js';
 import { initSidewalks } from './sidewalks.js';
 import { initCoast } from './coast.js';
 import { initJunctions } from './junctions.js';
@@ -87,6 +92,11 @@ const LAYERS = {
   overview: { label: 'Visual (overview)',    dir: 'overview/',         collision: false },
   col:      { label: 'Collision (stock)',    dir: 'collision/',        collision: true },
   extra:    { label: 'Collision (extra)',    dir: 'collision_extra/',  collision: true },
+  // bpx col-gen: collision generated from Burnout's visible models, on top
+  // of the stock collision, to replace the extra pieces. Ground green
+  // (yellow: rises beside a road behind a wall; red: with no wall), cliffs
+  // brown, structures blue, mountains purple.
+  gen:      { label: 'Collision (new)',      dir: 'collision_gen/',    collision: true },
 };
 const SURFACES = ['asphalt_island', 'asphalt_road', 'concrete', 'rock_dirt', 'gravel', 'cobbles', 'stone', 'chainlink_fence',
   'metal', 'wood_light', 'wood', 'sand', 'foliage', 'plastic_fabric', 'glass', 'water', 'rail_track', 'invisible_wall',
@@ -204,6 +214,7 @@ const traffic = initTraffic({ THREE, scene, camera, renderer, panel: $('trafficP
 const junctionsPanel = initJunctions({ THREE, scene, panel: $('junctionPanel'), pickGround });
 const water = initWater({ THREE, scene, camera, panel: $('waterPanel'), pickGround });
 const spawns = initSpawns({ THREE, scene, camera, panel: $('spawnPanel'), pickGround });
+const races = initRaces({ THREE, scene, camera, panel: $('racePanel'), pickGround });
 // Shows only the given collision surface ids (null: all), ticking the
 // Surfaces checkboxes to match.
 function showOnlySurfaces(ids) {
@@ -223,8 +234,8 @@ function parseUnits(s) {
 }
 
 function surfaceOf(matName) {
-  const m = /^(gen_)?(\d+)_/.exec(matName || '');
-  return m ? { id: +m[2], generated: !!m[1] } : null;
+  const m = /^(gen_|fill_|fillwall_|fillopen_|cliff_|struct_|mount_)?(\d+)_/.exec(matName || '');
+  return m ? { id: +m[2], generated: m[1] === 'gen_', fill: m[1] && m[1] !== 'gen_' ? m[1] : null } : null;
 }
 
 function styleCollision(root) {
@@ -237,7 +248,8 @@ function styleCollision(root) {
     m.wireframe = $('wire').checked;
     m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = -1;
     m.depthWrite = !m.transparent;
-    o.visible = !!s && !state.hiddenSurfaces.has(s.id) && (!$('genonly').checked || s.generated);
+    o.visible = !!s && !state.hiddenSurfaces.has(s.id) && (!$('genonly').checked || s.generated || !!s.fill)
+      && (!$('fillopen').checked || !s.fill || s.fill === 'fillopen_');
   });
 }
 
@@ -638,10 +650,20 @@ $('near').onchange = () => {
 };
 for (const [k, l] of Object.entries(LAYERS)) {
   const lab = document.createElement('label');
-  lab.innerHTML = `<input type="checkbox" ${state.layers.has(k) ? 'checked' : ''}> ${l.label}`;
+  lab.innerHTML = `<input type="checkbox" data-layer="${k}" ${state.layers.has(k) ? 'checked' : ''}> ${l.label}`;
   lab.querySelector('input').onchange = (e) => { e.target.checked ? state.layers.add(k) : state.layers.delete(k); load(false); };
   $('layers').appendChild(lab);
 }
+// Old against new collision: the extra layer (stock + the old added pieces)
+// or the stock layer with the generated one; other layers stay as they are.
+function showCollision(which) {
+  for (const k of ['col', 'extra', 'gen']) state.layers.delete(k);
+  for (const k of which === 'old' ? ['extra'] : ['col', 'gen']) state.layers.add(k);
+  $('layers').querySelectorAll('input').forEach((box) => { box.checked = state.layers.has(box.dataset.layer); });
+  load(false);
+}
+$('showOld').onclick = () => showCollision('old');
+$('showNew').onclick = () => showCollision('new');
 SURFACES.forEach((name, id) => {
   const h = (id * 0.618034) % 1;
   const col = new THREE.Color().setHSL(h, 0.61, 0.62);
@@ -654,7 +676,7 @@ $('load').onclick = () => { state.units = $('units').value; load(true); };
 $('units').onkeydown = (e) => { if (e.key === 'Enter') $('load').onclick(); };
 $('frame').onclick = () => frame(false);
 $('top').onclick = () => frame(true);
-for (const id of ['opacity', 'wire', 'genonly']) $(id).oninput = restyle;
+for (const id of ['opacity', 'wire', 'genonly', 'fillopen']) $(id).oninput = restyle;
 
 $('editmode').onchange = () => {
   if ($('editmode').checked) {
@@ -734,6 +756,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (junctionsPanel.handleClick(e)) return;
   if (water.handleClick(e)) return;
   if (spawns.handleClick(e)) return;
+  if (races.handleClick(e)) return;
   if (sidewalks.handleClick(e)) return;
   if (coast.handleClick(e)) return;
   ray.setFromCamera(new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
