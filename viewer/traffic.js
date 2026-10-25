@@ -10,6 +10,12 @@
 // starts on that road. "Colour by traffic" shows it; "Set traffic" changes
 // it for the selection, and "Select area" selects every lane in a box.
 //
+// Lane ends ("Show lane ends"): a drawn lane only joins the roads at its
+// ends, as bpx builds it: its first point within SNAP m of a lane's end (red
+// dots), its last within SNAP m of a lane's start (blue dots), or of another
+// drawn lane's start / end (drawn in pieces). Each drawn lane's ends show
+// big: green when they join, white when they don't.
+//
 // Parked vehicles can be set to any GTA vehicle model ("Set vehicle", or
 // "Add parked car" with a model in the box): planes, helicopters, boats,
 // ATVs... Shown orange. Without one, GTA picks a car.
@@ -26,6 +32,7 @@ const MAX_TRAFFIC = 9;      // busiest Burnout lane (colour scale)
 const CAR_PICK_BONUS = 10;  // parked cars are easier to click: their whole box,
                             // plus this many pixels around it
 const PASTE_SIDE = 3.0;     // pasted parked cars go this far (m) to the right
+const SNAP = 3.0;           // a drawn lane's end joins within this (m; matches bpx)
 
 // GTA roads only have four speed bands (bpx paths.rs speed_class): traffic
 // picks its own cruising speed from the band, so speeds within one band
@@ -40,6 +47,7 @@ const COLOURS = {
   selected: 0x00e5ff, drawn: 0x3fff7a, connection: 0xff40ff,
   parked: 0x9ecbff, parkedDeleted: 0xb03030, parkedNew: 0x3fff7a, draft: 0xffffff,
   parkedModel: 0xff9f2e,      // a parked vehicle set to a specific model
+  laneEnd: 0xff3b30, laneStart: 0x2f8cff, joined: 0x3fff7a, unjoined: 0xffffff,
 };
 
 const emptyEdits = () => ({ format: 'paradise-traffic-edits-v1', lanes: {}, connections: [], newLanes: [], parked: {}, newParked: [] });
@@ -54,6 +62,7 @@ export function initTraffic({ THREE, scene, camera, renderer, panel, info, pickG
   panel.innerHTML = `
     <label><input id="tShow" type="checkbox"> Show traffic</label>
     <label><input id="tTop" type="checkbox" checked> Draw on top</label>
+    <label><input id="tEnds" type="checkbox" checked> Show lane ends (start a drawn lane on red, finish on blue)</label>
     <label><input id="tEdit" type="checkbox"> Edit traffic</label>
     <div class="row"><button id="tReverse">Reverse</button><button id="tDelete">Delete</button><button id="tRestore">Restore</button></div>
     <div class="row"><button id="tLeft">◀ Shift</button><button id="tRight">Shift ▶</button><button id="tConnect">Connect A→B</button></div>
@@ -146,6 +155,36 @@ export function initTraffic({ THREE, scene, camera, renderer, panel, info, pickG
     return [pa[pa.length - 1], pb[0]];
   }
 
+  // --- lane ends (mirrors bpx edits.rs) ---
+  const dist3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  function laneEnds() {
+    const starts = [], ends = [];
+    for (const lane of data.lanes) {
+      if ((edits.lanes[lane.id] || {}).delete) continue;
+      const pts = lanePoints(lane);
+      starts.push(pts[0]);
+      ends.push(pts[pts.length - 1]);
+    }
+    return { starts, ends };
+  }
+  const nearAny = (list, p) => list.some((q) => dist3(q, p) <= SNAP);
+  // [start joins, end joins] per drawn lane.
+  function drawnJoins(le) {
+    const joins = edits.newLanes.map((l) => [nearAny(le.ends, l.points[0]), nearAny(le.starts, l.points[l.points.length - 1])]);
+    edits.newLanes.forEach((l, i) => {
+      if (joins[i][1]) return;
+      const end = l.points[l.points.length - 1];
+      let best = null;
+      edits.newLanes.forEach((m, j) => {
+        if (j === i || joins[j][0]) return;
+        const d = dist3(m.points[0], end);
+        if (d <= SNAP && (!best || d < best[0])) best = [d, j];
+      });
+      if (best) { joins[i][1] = true; joins[best[1]][0] = true; }
+    });
+    return joins;
+  }
+
   // --- drawing ---
   function addPolyline(pos, col, pts, colour, arrows) {
     const c = new THREE.Color(colour);
@@ -212,6 +251,31 @@ export function initTraffic({ THREE, scene, camera, renderer, panel, info, pickG
     const lines = new THREE.LineSegments(g, m);
     lines.renderOrder = 10;
     group.add(lines);
+    if ($('tEnds').checked) {
+      const le = laneEnds();
+      const joins = drawnJoins(le);
+      const dots = (pts, colour, size) => {
+        const c = new THREE.Color(colour), p = [], k = [];
+        for (const q of pts) { p.push(q[0], q[1] + LIFT, q[2]); k.push(c.r, c.g, c.b); }
+        const dg = new THREE.BufferGeometry();
+        dg.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+        dg.setAttribute('color', new THREE.Float32BufferAttribute(k, 3));
+        const d = new THREE.Points(dg, new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true, depthTest: !$('tTop').checked, transparent: true }));
+        d.renderOrder = 11;
+        group.add(d);
+      };
+      dots(le.ends, COLOURS.laneEnd, 6);
+      dots(le.starts, COLOURS.laneStart, 6);
+      const big = { joined: [], unjoined: [] };
+      edits.newLanes.forEach((l, i) => {
+        big[joins[i][0] ? 'joined' : 'unjoined'].push(l.points[0]);
+        big[joins[i][1] ? 'joined' : 'unjoined'].push(l.points[l.points.length - 1]);
+      });
+      dots(big.joined, COLOURS.joined, 11);
+      dots(big.unjoined, COLOURS.unjoined, 11);
+      const loose = big.unjoined.length;
+      if (loose) { status(`${loose} drawn lane end(s) join no lane (white dots).`); return; }
+    }
     status();
   }
 
@@ -312,7 +376,16 @@ export function initTraffic({ THREE, scene, camera, renderer, panel, info, pickG
       const p = pickGround(e);
       if (!p) { status('No ground there: load the units (visual or collision) under the spot first.'); return true; }
       const pt = [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)];
-      if (mode === 'draw') { draft.push(pt); redraw(); return true; }
+      if (mode === 'draw') {
+        draft.push(pt);
+        redraw();
+        if (draft.length === 1 && $('tEnds').checked) {
+          const le = laneEnds();
+          const ok = nearAny(le.ends, pt) || edits.newLanes.some((l) => dist3(l.points[l.points.length - 1], pt) <= SNAP);
+          status(ok ? 'The lane starts on a lane end: it joins.' : `This start joins nothing: start within ${SNAP} m of a red dot (a lane's end).`);
+        }
+        return true;
+      }
       if (mode === 'addPark') {
         const model = modelInBox();
         change(() => edits.newParked.push(Object.assign({ pos: pt, dir: nearestLaneDir(pt) }, model ? { model } : {})));
@@ -382,6 +455,7 @@ export function initTraffic({ THREE, scene, camera, renderer, panel, info, pickG
     redraw();
   };
   $('tTop').onchange = redraw;
+  $('tEnds').onchange = redraw;
   $('tEdit').onchange = () => {
     if ($('tEdit').checked && !$('tShow').checked) { $('tShow').checked = true; $('tShow').onchange(); }
     if (!$('tEdit').checked) { mode = 'select'; draft = []; selection.length = 0; redraw(); showInfo(); }
